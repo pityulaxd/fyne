@@ -2,7 +2,6 @@ package widget
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"fyne.io/fyne/v2/data/binding"
 )
@@ -10,8 +9,8 @@ import (
 // basicBinder stores a DataItem and a function to be called when it changes.
 // It provides a convenient way to replace data and callback independently.
 type basicBinder struct {
-	callback atomic.Value // func(binding.DataItem)
-
+	callback             func(binding.DataItem) // func(binding.DataItem)
+	callbackLock         sync.RWMutex
 	dataListenerPairLock sync.RWMutex
 	dataListenerPair     annotatedListener // access guarded by dataListenerPairLock
 }
@@ -19,9 +18,11 @@ type basicBinder struct {
 // Bind replaces the data item whose changes are tracked by the callback function.
 func (binder *basicBinder) Bind(data binding.DataItem) {
 	listener := binding.NewDataListener(func() { // NB: listener captures `data` but always calls the up-to-date callback
-		f := binder.callback.Load()
-		if fn, ok := f.(func(binding.DataItem)); ok && fn != nil {
-			fn(data)
+		binder.callbackLock.RLock()
+		f := binder.callback
+		binder.callbackLock.RUnlock()
+		if f != nil {
+			f(data)
 		}
 	})
 	data.AddListener(listener)
@@ -47,7 +48,9 @@ func (binder *basicBinder) CallWithData(f func(data binding.DataItem)) {
 
 // SetCallback replaces the function to be called when the data changes.
 func (binder *basicBinder) SetCallback(f func(data binding.DataItem)) {
-	binder.callback.Store(f)
+	binder.callbackLock.Lock()
+	binder.callback = f
+	binder.callbackLock.Unlock()
 }
 
 // Unbind requests the callback to be no longer called when the previously bound
